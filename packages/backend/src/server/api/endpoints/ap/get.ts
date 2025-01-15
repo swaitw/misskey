@@ -1,3 +1,8 @@
+/*
+ * SPDX-FileCopyrightText: syuilo and misskey-project
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
 import { Injectable } from '@nestjs/common';
 import ms from 'ms';
 import { Endpoint } from '@/server/api/endpoint-base.js';
@@ -6,7 +11,9 @@ import { ApResolverService } from '@/core/activitypub/ApResolverService.js';
 export const meta = {
 	tags: ['federation'],
 
+	requireAdmin: true,
 	requireCredential: true,
+	kind: 'read:federation',
 
 	limit: {
 		duration: ms('1hour'),
@@ -30,9 +37,8 @@ export const paramDef = {
 	required: ['uri'],
 } as const;
 
-// eslint-disable-next-line import/no-default-export
 @Injectable()
-export default class extends Endpoint<typeof meta, typeof paramDef> {
+export default class extends Endpoint<typeof meta, typeof paramDef> { // eslint-disable-line import/no-default-export
 	constructor(
 		private apResolverService: ApResolverService,
 	) {

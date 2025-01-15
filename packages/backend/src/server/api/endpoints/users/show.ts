@@ -1,7 +1,12 @@
+/*
+ * SPDX-FileCopyrightText: syuilo and misskey-project
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
 import { In, IsNull } from 'typeorm';
 import { Inject, Injectable } from '@nestjs/common';
-import type { UsersRepository } from '@/models/index.js';
-import type { User } from '@/models/entities/User.js';
+import type { UsersRepository } from '@/models/_.js';
+import type { MiUser } from '@/models/User.js';
 import { Endpoint } from '@/server/api/endpoint-base.js';
 import { UserEntityService } from '@/core/entities/UserEntityService.js';
 import { RemoteUserResolveService } from '@/core/RemoteUserResolveService.js';
@@ -48,6 +53,7 @@ export const meta = {
 			message: 'No such user.',
 			code: 'NO_SUCH_USER',
 			id: '4362f8dc-731f-4ad8-a694-be5a88922a24',
+			httpStatusCode: 404,
 		},
 	},
 } as const;
@@ -73,9 +79,8 @@ export const paramDef = {
 	],
 } as const;
 
-// eslint-disable-next-line import/no-default-export
 @Injectable()
-export default class extends Endpoint<typeof meta, typeof paramDef> {
+export default class extends Endpoint<typeof meta, typeof paramDef> { // eslint-disable-line import/no-default-export
 	constructor(
 		@Inject(DI.usersRepository)
 		private usersRepository: UsersRepository,
@@ -90,6 +95,7 @@ export default class extends Endpoint<typeof meta, typeof paramDef> {
 			let user;
 
 			const isModerator = await this.roleService.isModerator(me);
+			ps.username = ps.username?.trim();
 
 			if (ps.userIds) {
 				if (ps.userIds.length === 0) {
@@ -104,14 +110,16 @@ export default class extends Endpoint<typeof meta, typeof paramDef> {
 				});
 
 				// リクエストされた通りに並べ替え
-				const _users: User[] = [];
+				// 順番は保持されるけど数は減ってる可能性がある
+				const _users: MiUser[] = [];
 				for (const id of ps.userIds) {
-					_users.push(users.find(x => x.id === id)!);
+					const user = users.find(x => x.id === id);
+					if (user != null) _users.push(user);
 				}
 
-				return await Promise.all(_users.map(u => this.userEntityService.pack(u, me, {
-					detail: true,
-				})));
+				const _userMap = await this.userEntityService.packMany(_users, me, { schema: 'UserDetailed' })
+					.then(users => new Map(users.map(u => [u.id, u])));
+				return _users.map(u => _userMap.get(u.id)!);
 			} else {
 				// Lookup user
 				if (typeof ps.host === 'string' && typeof ps.username === 'string') {
@@ -120,7 +128,7 @@ export default class extends Endpoint<typeof meta, typeof paramDef> {
 						throw new ApiError(meta.errors.failedToResolveRemoteUser);
 					});
 				} else {
-					const q: FindOptionsWhere<User> = ps.userId != null
+					const q: FindOptionsWhere<MiUser> = ps.userId != null
 						? { id: ps.userId }
 						: { usernameLower: ps.username!.toLowerCase(), host: IsNull() };
 
@@ -140,7 +148,7 @@ export default class extends Endpoint<typeof meta, typeof paramDef> {
 				}
 
 				return await this.userEntityService.pack(user, me, {
-					detail: true,
+					schema: 'UserDetailed',
 				});
 			}
 		});

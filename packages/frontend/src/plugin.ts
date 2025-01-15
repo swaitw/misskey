@@ -1,43 +1,50 @@
+/*
+ * SPDX-FileCopyrightText: syuilo and misskey-project
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
+import { ref } from 'vue';
 import { Interpreter, Parser, utils, values } from '@syuilo/aiscript';
-import { createAiScriptEnv } from '@/scripts/aiscript/api';
-import { inputText } from '@/os';
-import { Plugin, noteActions, notePostInterruptors, noteViewInterruptors, postFormActions, userActions } from '@/store';
+import { aiScriptReadline, createAiScriptEnv } from '@/scripts/aiscript/api.js';
+import { inputText } from '@/os.js';
+import { Plugin, noteActions, notePostInterruptors, noteViewInterruptors, postFormActions, userActions, pageViewInterruptors } from '@/store.js';
 
 const parser = new Parser();
 const pluginContexts = new Map<string, Interpreter>();
+export const pluginLogs = ref(new Map<string, string[]>());
 
-export function install(plugin: Plugin): void {
+export async function install(plugin: Plugin): Promise<void> {
 	// 後方互換性のため
 	if (plugin.src == null) return;
-	console.info('Plugin installed:', plugin.name, 'v' + plugin.version);
 
 	const aiscript = new Interpreter(createPluginEnv({
 		plugin: plugin,
 		storageKey: 'plugins:' + plugin.id,
 	}), {
-		in: (q): Promise<string> => {
-			return new Promise(ok => {
-				inputText({
-					title: q,
-				}).then(({ canceled, result: a }) => {
-					if (canceled) {
-						ok('');
-					} else {
-						ok(a);
-					}
-				});
-			});
-		},
+		in: aiScriptReadline,
 		out: (value): void => {
 			console.log(value);
+			pluginLogs.value.get(plugin.id).push(utils.reprValue(value));
 		},
 		log: (): void => {
+		},
+		err: (err): void => {
+			pluginLogs.value.get(plugin.id).push(`${err}`);
+			throw err; // install時のtry-catchに反応させる
 		},
 	});
 
 	initPlugin({ plugin, aiscript });
 
-	aiscript.exec(parser.parse(plugin.src));
+	aiscript.exec(parser.parse(plugin.src)).then(
+		() => {
+			console.info('Plugin installed:', plugin.name, 'v' + plugin.version);
+		},
+		(err) => {
+			console.error('Plugin install failed:', plugin.name, 'v' + plugin.version);
+			throw err;
+		},
+	);
 }
 
 function createPluginEnv(opts: { plugin: Plugin; storageKey: string }): Record<string, values.Value> {
@@ -80,9 +87,12 @@ function createPluginEnv(opts: { plugin: Plugin; storageKey: string }): Record<s
 		'Plugin:register_note_post_interruptor': values.FN_NATIVE(([handler]) => {
 			registerNotePostInterruptor({ pluginId: opts.plugin.id, handler });
 		}),
+		'Plugin:register_page_view_interruptor': values.FN_NATIVE(([handler]) => {
+			registerPageViewInterruptor({ pluginId: opts.plugin.id, handler });
+		}),
 		'Plugin:open_url': values.FN_NATIVE(([url]) => {
 			utils.assertString(url);
-			window.open(url.value, '_blank');
+			window.open(url.value, '_blank', 'noopener');
 		}),
 		'Plugin:config': values.OBJ(config),
 	};
@@ -90,6 +100,7 @@ function createPluginEnv(opts: { plugin: Plugin; storageKey: string }): Record<s
 
 function initPlugin({ plugin, aiscript }): void {
 	pluginContexts.set(plugin.id, aiscript);
+	pluginLogs.value.set(plugin.id, []);
 }
 
 function registerPostFormAction({ pluginId, title, handler }): void {
@@ -153,6 +164,18 @@ function registerNotePostInterruptor({ pluginId, handler }): void {
 				return;
 			}
 			return utils.valToJs(await pluginContext.execFn(handler, [utils.jsToVal(note)]));
+		},
+	});
+}
+
+function registerPageViewInterruptor({ pluginId, handler }): void {
+	pageViewInterruptors.push({
+		handler: async (page) => {
+			const pluginContext = pluginContexts.get(pluginId);
+			if (!pluginContext) {
+				return;
+			}
+			return utils.valToJs(await pluginContext.execFn(handler, [utils.jsToVal(page)]));
 		},
 	});
 }

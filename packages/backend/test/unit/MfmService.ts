@@ -1,3 +1,8 @@
+/*
+ * SPDX-FileCopyrightText: syuilo and misskey-project
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
 import * as assert from 'assert';
 import * as mfm from 'mfm-js';
 import { Test } from '@nestjs/testing';
@@ -26,6 +31,18 @@ describe('MfmService', () => {
 		test('br alt', () => {
 			const input = 'foo\r\nbar\rbaz';
 			const output = '<p><span>foo<br>bar<br>baz</span></p>';
+			assert.equal(mfmService.toHtml(mfm.parse(input)), output);
+		});
+
+		test('Do not generate unnecessary span', () => {
+			const input = 'foo $[tada bar]';
+			const output = '<p>foo <i>bar</i></p>';
+			assert.equal(mfmService.toHtml(mfm.parse(input)), output);
+		});
+
+		test('escape', () => {
+			const input = '```\n<p>Hello, world!</p>\n```';
+			const output = '<p><pre><code>&lt;p&gt;Hello, world!&lt;/p&gt;</code></pre></p>';
 			assert.equal(mfmService.toHtml(mfm.parse(input)), output);
 		});
 	});
@@ -89,6 +106,24 @@ describe('MfmService', () => {
 
 		test('link without both', () => {
 			assert.deepStrictEqual(mfmService.fromHtml('<p>a <a></a> d</p>'), 'a  d');
+		});
+
+		test('ruby', () => {
+			assert.deepStrictEqual(mfmService.fromHtml('<p>a <ruby>Misskey<rp>(</rp><rt>ミスキー</rt><rp>)</rp></ruby> b</p>'), 'a $[ruby Misskey ミスキー] b');
+			assert.deepStrictEqual(mfmService.fromHtml('<p>a <ruby>Misskey<rp>(</rp><rt>ミスキー</rt><rp>)</rp>Misskey<rp>(</rp><rt>ミスキー</rt><rp>)</rp></ruby> b</p>'), 'a $[ruby Misskey ミスキー]$[ruby Misskey ミスキー] b');
+		});
+
+		test('ruby with spaces', () => {
+			assert.deepStrictEqual(mfmService.fromHtml('<p>a <ruby>Miss key<rp>(</rp><rt>ミスキー</rt><rp>)</rp> b</ruby> c</p>'), 'a Miss key(ミスキー) b c');
+			assert.deepStrictEqual(mfmService.fromHtml('<p>a <ruby>Misskey<rp>(</rp><rt>ミス キー</rt><rp>)</rp> b</ruby> c</p>'), 'a Misskey(ミス キー) b c');
+			assert.deepStrictEqual(
+				mfmService.fromHtml('<p>a <ruby>Misskey<rp>(</rp><rt>ミスキー</rt><rp>)</rp>Misskey<rp>(</rp><rt>ミス キー</rt><rp>)</rp>Misskey<rp>(</rp><rt>ミスキー</rt><rp>)</rp></ruby> b</p>'),
+				'a Misskey(ミスキー)Misskey(ミス キー)Misskey(ミスキー) b'
+			);
+		});
+
+		test('ruby with other inline tags', () => {
+			assert.deepStrictEqual(mfmService.fromHtml('<p>a <ruby><strong>Misskey</strong><rp>(</rp><rt>ミスキー</rt><rp>)</rp> b</ruby> c</p>'), 'a **Misskey**(ミスキー) b c');
 		});
 
 		test('mention', () => {

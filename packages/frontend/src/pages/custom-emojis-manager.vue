@@ -1,11 +1,16 @@
+<!--
+SPDX-FileCopyrightText: syuilo and misskey-project
+SPDX-License-Identifier: AGPL-3.0-only
+-->
+
 <template>
 <div>
 	<MkStickyContainer>
 		<template #header><MkPageHeader v-model:tab="tab" :actions="headerActions" :tabs="headerTabs"/></template>
-		<MkSpacer :content-max="900">
+		<MkSpacer :contentMax="900">
 			<div class="ogwlenmc">
 				<div v-if="tab === 'local'" class="local">
-					<MkInput v-model="query" :debounce="true" type="search">
+					<MkInput v-model="query" :debounce="true" type="search" autocapitalize="off">
 						<template #prefix><i class="ti ti-search"></i></template>
 						<template #label>{{ i18n.ts.search }}</template>
 					</MkInput>
@@ -15,9 +20,10 @@
 					<div v-if="selectMode" class="_buttons">
 						<MkButton inline @click="selectAll">Select all</MkButton>
 						<MkButton inline @click="setCategoryBulk">Set category</MkButton>
+						<MkButton inline @click="setTagBulk">Set tag</MkButton>
 						<MkButton inline @click="addTagBulk">Add tag</MkButton>
 						<MkButton inline @click="removeTagBulk">Remove tag</MkButton>
-						<MkButton inline @click="setTagBulk">Set tag</MkButton>
+						<MkButton inline @click="setLicenseBulk">Set License</MkButton>
 						<MkButton inline danger @click="delBulk">Delete</MkButton>
 					</div>
 					<MkPagination ref="emojisPaginationComponent" :pagination="pagination">
@@ -25,7 +31,7 @@
 						<template #default="{items}">
 							<div class="ldhfsamy">
 								<button v-for="emoji in items" :key="emoji.id" class="emoji _panel _button" :class="{ selected: selectedEmojis.includes(emoji.id) }" @click="selectMode ? toggleSelect(emoji) : edit(emoji)">
-									<img :src="`/emoji/${emoji.name}.webp`" class="img" :alt="emoji.name"/>
+									<img :src="emoji.url" class="img" :alt="emoji.name"/>
 									<div class="body">
 										<div class="name _monospace">{{ emoji.name }}</div>
 										<div class="info">{{ emoji.category }}</div>
@@ -38,7 +44,7 @@
 
 				<div v-else-if="tab === 'remote'" class="remote">
 					<FormSplit>
-						<MkInput v-model="queryRemote" :debounce="true" type="search">
+						<MkInput v-model="queryRemote" :debounce="true" type="search" autocapitalize="off">
 							<template #prefix><i class="ti ti-search"></i></template>
 							<template #label>{{ i18n.ts.search }}</template>
 						</MkInput>
@@ -51,7 +57,7 @@
 						<template #default="{items}">
 							<div class="ldhfsamy">
 								<div v-for="emoji in items" :key="emoji.id" class="emoji _panel _button" @click="remoteMenu(emoji, $event)">
-									<img :src="`/emoji/${emoji.name}@${emoji.host}.webp`" class="img" :alt="emoji.name"/>
+									<img :src="getProxiedImageUrl(emoji.url, 'emoji')" class="img" :alt="emoji.name"/>
 									<div class="body">
 										<div class="name _monospace">{{ emoji.name }}</div>
 										<div class="info">{{ emoji.host }}</div>
@@ -74,17 +80,19 @@ import MkInput from '@/components/MkInput.vue';
 import MkPagination from '@/components/MkPagination.vue';
 import MkSwitch from '@/components/MkSwitch.vue';
 import FormSplit from '@/components/form/split.vue';
-import { selectFile, selectFiles } from '@/scripts/select-file';
-import * as os from '@/os';
-import { i18n } from '@/i18n';
-import { definePageMetadata } from '@/scripts/page-metadata';
+import { selectFile } from '@/scripts/select-file.js';
+import * as os from '@/os.js';
+import { misskeyApi } from '@/scripts/misskey-api.js';
+import { getProxiedImageUrl } from '@/scripts/media-proxy.js';
+import { i18n } from '@/i18n.js';
+import { definePageMetadata } from '@/scripts/page-metadata.js';
 
 const emojisPaginationComponent = shallowRef<InstanceType<typeof MkPagination>>();
 
 const tab = ref('local');
-const query = ref(null);
-const queryRemote = ref(null);
-const host = ref(null);
+const query = ref<string | null>(null);
+const queryRemote = ref<string | null>(null);
+const host = ref<string | null>(null);
 const selectMode = ref(false);
 const selectedEmojis = ref<string[]>([]);
 
@@ -109,7 +117,7 @@ const selectAll = () => {
 	if (selectedEmojis.value.length > 0) {
 		selectedEmojis.value = [];
 	} else {
-		selectedEmojis.value = emojisPaginationComponent.value.items.map(item => item.id);
+		selectedEmojis.value = Array.from(emojisPaginationComponent.value?.items.values(), item => item.id);
 	}
 };
 
@@ -122,35 +130,36 @@ const toggleSelect = (emoji) => {
 };
 
 const add = async (ev: MouseEvent) => {
-	const files = await selectFiles(ev.currentTarget ?? ev.target, null);
-
-	const promise = Promise.all(files.map(file => os.api('admin/emoji/add', {
-		fileId: file.id,
-	})));
-	promise.then(() => {
-		emojisPaginationComponent.value.reload();
+	const { dispose } = os.popup(defineAsyncComponent(() => import('./emoji-edit-dialog.vue')), {
+	}, {
+		done: result => {
+			if (result.created) {
+				emojisPaginationComponent.value?.prepend(result.created);
+			}
+		},
+		closed: () => dispose(),
 	});
-	os.promiseDialog(promise);
 };
 
 const edit = (emoji) => {
-	os.popup(defineAsyncComponent(() => import('./emoji-edit-dialog.vue')), {
+	const { dispose } = os.popup(defineAsyncComponent(() => import('./emoji-edit-dialog.vue')), {
 		emoji: emoji,
 	}, {
 		done: result => {
 			if (result.updated) {
-				emojisPaginationComponent.value.updateItem(result.updated.id, (oldEmoji: any) => ({
+				emojisPaginationComponent.value?.updateItem(result.updated.id, (oldEmoji) => ({
 					...oldEmoji,
 					...result.updated,
 				}));
 			} else if (result.deleted) {
-				emojisPaginationComponent.value.removeItem((item) => item.id === emoji.id);
+				emojisPaginationComponent.value?.removeItem(emoji.id);
 			}
 		},
-	}, 'closed');
+		closed: () => dispose(),
+	});
 };
 
-const im = (emoji) => {
+const importEmoji = (emoji) => {
 	os.apiWithDialog('admin/emoji/copy', {
 		emojiId: emoji.id,
 	});
@@ -163,7 +172,7 @@ const remoteMenu = (emoji, ev: MouseEvent) => {
 	}, {
 		text: i18n.ts.import,
 		icon: 'ti ti-plus',
-		action: () => { im(emoji); },
+		action: () => { importEmoji(emoji); },
 	}], ev.currentTarget ?? ev.target);
 };
 
@@ -172,7 +181,7 @@ const menu = (ev: MouseEvent) => {
 		icon: 'ti ti-download',
 		text: i18n.ts.export,
 		action: async () => {
-			os.api('export-custom-emojis', {
+			misskeyApi('export-custom-emojis', {
 			})
 				.then(() => {
 					os.alert({
@@ -191,7 +200,7 @@ const menu = (ev: MouseEvent) => {
 		text: i18n.ts.import,
 		action: async () => {
 			const file = await selectFile(ev.currentTarget ?? ev.target);
-			os.api('admin/emoji/import-zip', {
+			misskeyApi('admin/emoji/import-zip', {
 				fileId: file.id,
 			})
 				.then(() => {
@@ -218,43 +227,55 @@ const setCategoryBulk = async () => {
 		ids: selectedEmojis.value,
 		category: result,
 	});
-	emojisPaginationComponent.value.reload();
+	emojisPaginationComponent.value?.reload();
+};
+
+const setLicenseBulk = async () => {
+	const { canceled, result } = await os.inputText({
+		title: 'License',
+	});
+	if (canceled) return;
+	await os.apiWithDialog('admin/emoji/set-license-bulk', {
+		ids: selectedEmojis.value,
+		license: result,
+	});
+	emojisPaginationComponent.value?.reload();
 };
 
 const addTagBulk = async () => {
 	const { canceled, result } = await os.inputText({
 		title: 'Tag',
 	});
-	if (canceled) return;
+	if (canceled || result == null) return;
 	await os.apiWithDialog('admin/emoji/add-aliases-bulk', {
 		ids: selectedEmojis.value,
 		aliases: result.split(' '),
 	});
-	emojisPaginationComponent.value.reload();
+	emojisPaginationComponent.value?.reload();
 };
 
 const removeTagBulk = async () => {
 	const { canceled, result } = await os.inputText({
 		title: 'Tag',
 	});
-	if (canceled) return;
+	if (canceled || result == null) return;
 	await os.apiWithDialog('admin/emoji/remove-aliases-bulk', {
 		ids: selectedEmojis.value,
 		aliases: result.split(' '),
 	});
-	emojisPaginationComponent.value.reload();
+	emojisPaginationComponent.value?.reload();
 };
 
 const setTagBulk = async () => {
 	const { canceled, result } = await os.inputText({
 		title: 'Tag',
 	});
-	if (canceled) return;
+	if (canceled || result == null) return;
 	await os.apiWithDialog('admin/emoji/set-aliases-bulk', {
 		ids: selectedEmojis.value,
 		aliases: result.split(' '),
 	});
-	emojisPaginationComponent.value.reload();
+	emojisPaginationComponent.value?.reload();
 };
 
 const delBulk = async () => {
@@ -266,10 +287,10 @@ const delBulk = async () => {
 	await os.apiWithDialog('admin/emoji/delete-bulk', {
 		ids: selectedEmojis.value,
 	});
-	emojisPaginationComponent.value.reload();
+	emojisPaginationComponent.value?.reload();
 };
 
-const headerActions = $computed(() => [{
+const headerActions = computed(() => [{
 	asFullButton: true,
 	icon: 'ti ti-plus',
 	text: i18n.ts.addEmoji,
@@ -279,7 +300,7 @@ const headerActions = $computed(() => [{
 	handler: menu,
 }]);
 
-const headerTabs = $computed(() => [{
+const headerTabs = computed(() => [{
 	key: 'local',
 	title: i18n.ts.local,
 }, {
@@ -287,43 +308,44 @@ const headerTabs = $computed(() => [{
 	title: i18n.ts.remote,
 }]);
 
-definePageMetadata(computed(() => ({
+definePageMetadata(() => ({
 	title: i18n.ts.customEmojis,
 	icon: 'ti ti-icons',
-})));
+}));
 </script>
 
 <style lang="scss" scoped>
 .ogwlenmc {
 	> .local {
 		.empty {
-			margin: var(--margin);
+			margin: var(--MI-margin);
 		}
-		
+
 		.ldhfsamy {
 			display: grid;
 			grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
 			grid-gap: 12px;
-			margin: var(--margin) 0;
-	
+			margin: var(--MI-margin) 0;
+
 			> .emoji {
 				display: flex;
 				align-items: center;
 				padding: 11px;
 				text-align: left;
-				border: solid 1px var(--panel);
+				border: solid 1px var(--MI_THEME-panel);
 
 				&:hover {
-					border-color: var(--inputBorderHover);
+					border-color: var(--MI_THEME-inputBorderHover);
 				}
 
 				&.selected {
-					border-color: var(--accent);
+					border-color: var(--MI_THEME-accent);
 				}
 
 				> .img {
 					width: 42px;
 					height: 42px;
+					object-fit: contain;
 				}
 
 				> .body {
@@ -348,14 +370,14 @@ definePageMetadata(computed(() => ({
 
 	> .remote {
 		.empty {
-			margin: var(--margin);
+			margin: var(--MI-margin);
 		}
 
 		.ldhfsamy {
 			display: grid;
 			grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
 			grid-gap: 12px;
-			margin: var(--margin) 0;
+			margin: var(--MI-margin) 0;
 
 			> .emoji {
 				display: flex;
@@ -364,12 +386,13 @@ definePageMetadata(computed(() => ({
 				text-align: left;
 
 				&:hover {
-					color: var(--accent);
+					color: var(--MI_THEME-accent);
 				}
 
 				> .img {
 					width: 32px;
 					height: 32px;
+					object-fit: contain;
 				}
 
 				> .body {
