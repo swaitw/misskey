@@ -1,31 +1,53 @@
+<!--
+SPDX-FileCopyrightText: syuilo and misskey-project
+SPDX-License-Identifier: AGPL-3.0-only
+-->
+
 <template>
-<div v-if="chosen && !shouldHide" :class="$style.root">
-	<div v-if="!showMenu" :class="[$style.main, $style['form_' + chosen.place]]">
-		<a :href="chosen.url" target="_blank" :class="$style.link">
+<div v-if="chosen && !shouldHide">
+	<div
+		v-if="!showMenu"
+		:class="[$style.main, {
+			[$style.form_square]: chosen.place === 'square',
+			[$style.form_horizontal]: chosen.place === 'horizontal',
+			[$style.form_horizontalBig]: chosen.place === 'horizontal-big',
+			[$style.form_vertical]: chosen.place === 'vertical',
+		}]"
+	>
+		<component
+			:is="self ? 'MkA' : 'a'"
+			:class="$style.link"
+			v-bind="self ? {
+				to: chosen.url.substring(local.length),
+			} : {
+				href: chosen.url,
+				rel: 'nofollow noopener',
+				target: '_blank',
+			}"
+		>
 			<img :src="chosen.imageUrl" :class="$style.img">
 			<button class="_button" :class="$style.i" @click.prevent.stop="toggleMenu"><i :class="$style.iIcon" class="ti ti-info-circle"></i></button>
-		</a>
+		</component>
 	</div>
 	<div v-else :class="$style.menu">
-		<div :class="$style.menuContainer">
-			<div>Ads by {{ host }}</div>
-			<!--<MkButton class="button" primary>{{ $ts._ad.like }}</MkButton>-->
-			<MkButton v-if="chosen.ratio !== 0" :class="$style.menuButton" @click="reduceFrequency">{{ $ts._ad.reduceFrequencyOfThisAd }}</MkButton>
-			<button class="_textButton" @click="toggleMenu">{{ $ts._ad.back }}</button>
-		</div>
+		<div>Ads by {{ host }}</div>
+		<!--<MkButton class="button" primary>{{ i18n.ts._ad.like }}</MkButton>-->
+		<MkButton v-if="chosen.ratio !== 0" :class="$style.menuButton" @click="reduceFrequency">{{ i18n.ts._ad.reduceFrequencyOfThisAd }}</MkButton>
+		<button class="_textButton" @click="toggleMenu">{{ i18n.ts._ad.back }}</button>
 	</div>
 </div>
 <div v-else></div>
 </template>
 
 <script lang="ts" setup>
-import { ref } from 'vue';
-import { instance } from '@/instance';
-import { host } from '@/config';
+import { ref, computed } from 'vue';
+import { url as local, host } from '@@/js/config.js';
+import { i18n } from '@/i18n.js';
+import { instance } from '@/instance.js';
 import MkButton from '@/components/MkButton.vue';
-import { defaultStore } from '@/store';
-import * as os from '@/os';
-import { $i } from '@/account';
+import { defaultStore } from '@/store.js';
+import * as os from '@/os.js';
+import { $i } from '@/account.js';
 
 type Ad = (typeof instance)['ads'][number];
 
@@ -82,7 +104,10 @@ const choseAd = (): Ad | null => {
 };
 
 const chosen = ref(choseAd());
-const shouldHide = $ref($i && $i.policies.canHideAds);
+
+const self = computed(() => chosen.value?.url.startsWith(local));
+
+const shouldHide = ref(!defaultStore.state.forceShowAds && $i && $i.policies.canHideAds && (props.specify == null));
 
 function reduceFrequency(): void {
 	if (chosen.value == null) return;
@@ -95,11 +120,6 @@ function reduceFrequency(): void {
 </script>
 
 <style lang="scss" module>
-.root {
-	background-size: auto auto;
-	background-image: repeating-linear-gradient(45deg, transparent, transparent 8px, var(--ad) 8px, var(--ad) 14px );
-}
-
 .main {
 	text-align: center;
 
@@ -112,8 +132,6 @@ function reduceFrequency(): void {
 	}
 
 	&.form_horizontal {
-		padding: 8px;
-
 		> .link,
 		> .link > .img {
 			max-width: min(600px, 100%);
@@ -121,9 +139,7 @@ function reduceFrequency(): void {
 		}
 	}
 
-	&.form_horizontal-big {
-		padding: 8px;
-
+	&.form_horizontalBig {
 		> .link,
 		> .link > .img {
 			max-width: min(600px, 100%);
@@ -164,7 +180,7 @@ function reduceFrequency(): void {
 	right: 1px;
 	display: grid;
 	place-content: center;
-	background: var(--panel);
+	background: var(--MI_THEME-panel);
 	border-radius: 100%;
 	padding: 2px;
 }
@@ -175,15 +191,12 @@ function reduceFrequency(): void {
 }
 
 .menu {
-	padding: 8px;
 	text-align: center;
-}
-
-.menuContainer {
 	padding: 8px;
 	margin: 0 auto;
 	max-width: 400px;
-	border: solid 1px var(--divider);
+	background: var(--MI_THEME-panel);
+	border: solid 1px var(--MI_THEME-divider);
 }
 
 .menuButton {
